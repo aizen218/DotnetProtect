@@ -1,0 +1,73 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!-- Import from a consuming app when $(DotNetProtectEnable) is true. -->
+  <PropertyGroup>
+    <_DotNetProtectWeaverBaseDir>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../src/DotNetProtect.Weaver/bin/$(Configuration)/net10.0'))</_DotNetProtectWeaverBaseDir>
+    <!-- Always RID-less: the weaver runs under `dotnet exec` on the build machine, not as the published app RID. -->
+    <DotNetProtectWeaverDll Condition="'$(DotNetProtectWeaverDll)' == ''">$([System.IO.Path]::Combine($(_DotNetProtectWeaverBaseDir), 'DotNetProtect.Weaver.dll'))</DotNetProtectWeaverDll>
+    <DotNetProtectLibDir Condition="'$(DotNetProtectLibDir)' == ''">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)../src/DotNetProtect/bin/$(Configuration)/net10.0'))</DotNetProtectLibDir>
+    <!-- Default: keep attributes on members so you can see what was targeted. Set to true to remove them from metadata after weave. -->
+    <DotNetProtectStripAttributes Condition="'$(DotNetProtectStripAttributes)' == ''">false</DotNetProtectStripAttributes>
+    <DotNetProtectStripArgs Condition="'$(DotNetProtectStripAttributes)' == 'true'">--strip-attributes</DotNetProtectStripArgs>
+    <DotNetProtectStripArgs Condition="'$(DotNetProtectStripAttributes)' != 'true'">--no-strip-attributes</DotNetProtectStripArgs>
+    <!-- First-step metadata: rename non-public methods/fields that carry StringEncrypt / ObfuscateControlFlow (not Main / assembly entry). -->
+    <DotNetProtectRenamePrivateMarked Condition="'$(DotNetProtectRenamePrivateMarked)' == ''">false</DotNetProtectRenamePrivateMarked>
+    <DotNetProtectRenameArgs Condition="'$(DotNetProtectRenamePrivateMarked)' == 'true'">--rename-private-marked</DotNetProtectRenameArgs>
+    <DotNetProtectRenameArgs Condition="'$(DotNetProtectRenamePrivateMarked)' != 'true'"></DotNetProtectRenameArgs>
+    <!-- Full: internal type/ns + all private/internal methods/fields (supersedes rename-private-marked). -->
+    <DotNetProtectFullMetadata Condition="'$(DotNetProtectFullMetadata)' == ''">false</DotNetProtectFullMetadata>
+    <DotNetProtectFullMetadataArgs Condition="'$(DotNetProtectFullMetadata)' == 'true'">--full-metadata</DotNetProtectFullMetadataArgs>
+    <DotNetProtectFullMetadataArgs Condition="'$(DotNetProtectFullMetadata)' != 'true'"></DotNetProtectFullMetadataArgs>
+    <DotNetProtectAntiDebug Condition="'$(DotNetProtectAntiDebug)' == ''">false</DotNetProtectAntiDebug>
+    <DotNetProtectWeaverExtraArgs>$(DotNetProtectStripArgs) $(DotNetProtectRenameArgs) $(DotNetProtectFullMetadataArgs)</DotNetProtectWeaverExtraArgs>
+    <!-- Native AOT hardening defaults. -->
+    <DotNetProtectAotHardening Condition="'$(DotNetProtectAotHardening)' == ''">true</DotNetProtectAotHardening>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(PublishAot)' == 'true' and '$(DotNetProtectAotHardening)' == 'true'">
+    <StripSymbols>true</StripSymbols>
+    <IlcDisableReflection>true</IlcDisableReflection>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(DotNetProtectAntiDebug)' == 'true'">
+    <DefineConstants>$(DefineConstants);DOTNETPROTECT_ANTIDEBUG</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Build the weaver tool when it is not referenced as a project dependency (required for Native AOT publish). -->
+  <Target Name="EnsureDotNetProtectWeaverBuilt"
+          BeforeTargets="DotNetProtectWeave"
+          Condition="'$(DotNetProtectEnable)' == 'true'">
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../src/DotNetProtect.Weaver/DotNetProtect.Weaver.csproj"
+             Targets="Build"
+             Properties="Configuration=$(Configuration);TargetFramework=net10.0"
+             RemoveProperties="RuntimeIdentifier" />
+  </Target>
+
+  <!-- After CoreCompile patches $(IntermediateOutputPath)$(TargetFileName); Before IlcCompile so PublishAot uses woven IL. -->
+  <Target Name="DotNetProtectWeave"
+          AfterTargets="CoreCompile"
+          BeforeTargets="IlcCompile"
+          Condition="'$(DotNetProtectEnable)' == 'true'">
+    <Error Condition="!Exists('$(DotNetProtectWeaverDll)')"
+           Text="DotNetProtect weaver not found at $(DotNetProtectWeaverDll). Build project DotNetProtect.Weaver first (e.g. dotnet build on the solution)." />
+    <PropertyGroup>
+      <_DotNetProtectAssembly>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)$(TargetFileName)'))</_DotNetProtectAssembly>
+    </PropertyGroup>
+    <Exec Command="dotnet exec &quot;$(DotNetProtectWeaverDll)&quot; &quot;$(_DotNetProtectAssembly)&quot; --lib &quot;$(DotNetProtectLibDir)&quot; $(DotNetProtectWeaverExtraArgs)"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+
+  <!-- ILC emits a native executable at publish; patch that binary as well. -->
+  <Target Name="DotNetProtectPostPublishNativeBinary"
+          AfterTargets="Publish"
+          DependsOnTargets="EnsureDotNetProtectWeaverBuilt"
+          Condition="'$(DotNetProtectEnable)' == 'true' and '$(PublishAot)' == 'true'">
+    <Error Condition="!Exists('$(DotNetProtectWeaverDll)')"
+           Text="DotNetProtect weaver not found at $(DotNetProtectWeaverDll). Build project DotNetProtect.Weaver first." />
+    <PropertyGroup>
+      <_DotNetProtectPublishedNative>$([System.IO.Path]::GetFullPath($([System.IO.Path]::Combine('$(PublishDir)', '$(TargetName)$(NativeBinaryExt)'))))</_DotNetProtectPublishedNative>
+    </PropertyGroup>
+    <Exec Condition="Exists('$(_DotNetProtectPublishedNative)')"
+          Command="dotnet exec &quot;$(DotNetProtectWeaverDll)&quot; --protect-binary-only &quot;$(_DotNetProtectPublishedNative)&quot;"
+          WorkingDirectory="$(MSBuildProjectDirectory)" />
+  </Target>
+</Project>

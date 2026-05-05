@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>DotNetProtect</RootNamespace>
+    <AssemblyName>DotNetProtect</AssemblyName>
+    <Description>Attributes and lightweight runtime helpers for build-time IL protection.</Description>
+  </PropertyGroup>
+</Project>

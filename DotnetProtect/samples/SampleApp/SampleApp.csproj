@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>SampleApp</RootNamespace>
+    <!-- Post-process this assembly with Mono.Cecil after CoreCompile. -->
+    <DotNetProtectEnable>true</DotNetProtectEnable>
+    <!-- Full metadata: internal types + namespace, all private/internal methods/fields (see DotNetProtect.targets). -->
+    <DotNetProtectFullMetadata>true</DotNetProtectFullMetadata>
+    <!-- Redundant when FullMetadata is true; kept false for clarity. -->
+    <DotNetProtectRenamePrivateMarked>false</DotNetProtectRenamePrivateMarked>
+    <DotNetProtectAntiDebug>true</DotNetProtectAntiDebug>
+    <!-- Native AOT publish: weaver runs BeforeTargets=IlcCompile (see DotNetProtect.targets). -->
+    <PublishAot>true</PublishAot>
+    <StripSymbols>true</StripSymbols>
+    <IlcDisableReflection>true</IlcDisableReflection>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\DotNetProtect\DotNetProtect.csproj" />
+    <!-- Weaver is a separate Exe project: do not reference it here or Native AOT publish fails (NETSDK1150). -->
+    <!-- DotNetProtect.targets builds the weaver via MSBuild before IlcCompile / CoreCompile weave. -->
+  </ItemGroup>
+
+  <Import Project="..\..\build\DotNetProtect.targets" />
+</Project>
